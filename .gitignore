@@ -1,0 +1,13 @@
+# Large GeoNames raw dumps (US.txt is ~300MB — over GitHub's limit).
+# parks.js / attractions_geonames.js are generated from these; download from geonames.org to regenerate.
+GeoNames/
+
+# Home Assistant deployment bundle (build artifact)
+ha-bundle/
+
+# OS / editor / local config
+.DS_Store
+.claude/
+
+# Archives
+*.zip

@@ -1,0 +1,1419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Van Itinerary Builder</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🚐</text></svg>' />
+
+<!-- Leaflet (map) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- City autocomplete: North + Central America, pop >= 100k (GeoNames) -->
+<script src="cities.js"></script>
+<!-- iOverlander established campgrounds, Guatemala + Mexico -->
+<script src="camps_mx_gt.js"></script>
+<!-- GeoNames tourist sites & attractions (GT, MX, US) -->
+<script src="attractions_geonames.js"></script>
+<!-- Planet Fitness gyms worldwide (OSM) -->
+<script src="gyms_planet_fitness.js"></script>
+<!-- National & State parks (GeoNames GT/MX/US) -->
+<script src="parks.js"></script>
+
+<style>
+  :root{
+    --bg:#0f1720; --panel:#17212b; --panel2:#1f2c38; --line:#2b3a49;
+    --txt:#e7eef5; --muted:#9fb2c4; --accent:#3aa0ff; --accent2:#31c48d;
+    --warn:#ffb020; --danger:#ff5c5c; --route:#3aa0ff;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:var(--font);background:var(--bg);color:var(--txt)}
+  #app{display:grid;grid-template-columns:390px 1fr;height:100vh}
+  /* mobile Plan/Map toggle bar — hidden on desktop */
+  #mtabs{display:none}
+  @media (max-width:820px){
+    #mtabs{display:flex;position:fixed;top:0;left:0;right:0;height:46px;z-index:1000;
+      background:var(--panel);border-bottom:1px solid var(--line)}
+    #mtabs .mtab{flex:1;background:transparent;color:var(--muted);border:none;border-radius:0;font-size:14px;font-weight:600}
+    #mtabs .mtab.on{color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent)}
+    #app{grid-template-columns:1fr;grid-template-rows:1fr;height:calc(100vh - 46px);margin-top:46px}
+    #side{grid-area:1/1;height:calc(100vh - 46px);border-right:none}
+    main{grid-area:1/1;height:calc(100vh - 46px)}
+    body:not(.mapview) main{display:none}   /* Plan view (default) */
+    body.mapview #side{display:none}          /* Map view */
+  }
+
+  /* ---------- Sidebar ---------- */
+  #side{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:16px}
+  h1{font-size:17px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:12px;margin:0 0 14px;line-height:1.4}
+  label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px}
+  input,select{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--txt);font-size:14px}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1}
+  button{cursor:pointer;border:none;border-radius:8px;padding:11px 14px;font-size:14px;font-weight:600}
+  .primary{background:var(--accent);color:#04121f;width:100%;margin-top:16px}
+  .primary:disabled{opacity:.5;cursor:not-allowed}
+  .ghost{background:var(--panel2);color:var(--txt);border:1px solid var(--line)}
+  .pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .pill{font-size:11px;padding:4px 8px;border-radius:20px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--muted);cursor:pointer}
+  .pill.on{background:var(--accent);color:#04121f;border-color:var(--accent)}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:14px}
+  .stat{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
+  .stat b{color:var(--txt)}
+  .muted{color:var(--muted)}
+  .stage{border-left:3px solid var(--accent);padding:8px 10px;margin:8px 0;background:var(--panel);border-radius:0 8px 8px 0}
+  .stage h4{margin:0 0 3px;font-size:13px}
+  .stage .meta{font-size:11px;color:var(--muted)}
+  .adv{border-left:3px solid var(--warn);padding:8px 10px;margin:8px 0;background:var(--panel);border-radius:0 8px 8px 0;font-size:12px}
+  .adv.danger{border-color:var(--danger)}
+  .adv b{display:block;margin-bottom:2px}
+  details{margin-top:14px}
+  summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:600}
+  .why{font-size:13px;line-height:1.55;color:var(--txt)}
+  .why li{margin:4px 0}
+  .err{background:#3a1d1d;border:1px solid var(--danger);color:#ffd7d7;padding:10px;border-radius:8px;font-size:12px;margin-top:12px}
+  .foot{font-size:10px;color:var(--muted);margin-top:16px;line-height:1.5}
+  a{color:var(--accent)}
+  /* elevation chart */
+  #elev{width:100%;height:150px;display:block}
+  .elabel{font-size:10px;fill:var(--muted)}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #04121f60;border-top-color:#04121f;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  /* map */
+  #map{height:100%;width:100%}
+  .leaflet-popup-content{font-family:var(--font)}
+  .attr-pin{background:#8e44e8;color:#fff;border:2px solid #fff;border-radius:50%;
+    width:22px;height:22px;line-height:18px;text-align:center;font-size:12px;box-shadow:0 1px 4px #0006}
+  .poi-pin{background:#fff;border:1px solid #0004;border-radius:50%;width:24px;height:24px;
+    line-height:23px;text-align:center;font-size:14px;box-shadow:0 1px 3px #0006}
+  /* mini buttons on stop / saved rows */
+  .mini{flex:0 0 34px !important;padding:9px 0 !important;font-size:13px}
+  .stop-row .stop{flex:1}
+  .saved-row{display:flex;align-items:center;gap:6px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .saved-row:last-child{border-bottom:none}
+  .saved-row .cmp{width:16px;flex:0 0 16px}
+  /* compare modal */
+  .modal{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:9999;padding:18px}
+  .modal-in{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:700px;width:100%;max-height:88vh;overflow:auto}
+  .cmp-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+  .cmp-table th,.cmp-table td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
+  .cmp-table th{color:var(--muted);font-weight:600}
+  .cmp-table td.best{color:var(--accent2);font-weight:700}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+</style>
+</head>
+<body>
+<div id="mtabs">
+  <button class="mtab on" data-view="plan" onclick="setView('plan')">📋 Plan</button>
+  <button class="mtab" data-view="map" onclick="setView('map')">🗺️ Map</button>
+</div>
+<div id="app">
+  <aside id="side">
+    <h1>🚐 Van Itinerary Builder</h1>
+    <p class="sub">Paved-road itineraries for van/SUV overlanding across North &amp; Central America. Van (heavy-vehicle) routing, daily driving + climb caps, altitude profile, campgrounds, parks, gyms, and a safety advisory layer from public sources.</p>
+
+    <div id="setup" class="card" style="display:none">
+      <b style="font-size:13px">One-time setup</b>
+      <p class="muted" style="font-size:12px;margin:6px 0">Routing is powered by OpenRouteService. Get a free key at
+        <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noopener">openrouteservice.org</a>
+        (2,000 free routes/day). Stored only in this browser.</p>
+      <input id="key" placeholder="ORS API key (required)" />
+      <p class="muted" style="font-size:12px;margin:10px 0 4px">Optional — for US <b>national-park</b> campgrounds, add a free
+        <a href="https://www.nps.gov/subjects/developer/get-started.htm" target="_blank" rel="noopener">NPS API key</a>.
+        Central-America camps use OpenStreetMap and need no key.</p>
+      <input id="npskey" placeholder="NPS API key (optional, US only)" />
+      <button class="ghost" style="width:100%;margin-top:8px" onclick="saveKey()">Save keys</button>
+    </div>
+
+    <label>Stops (origin → destination)</label>
+    <div id="stops"></div>
+    <datalist id="places"></datalist>
+    <button class="ghost" style="width:100%;margin-top:8px" onclick="addStop()">+ Add stop</button>
+
+    <label>Max driving per day</label>
+    <div class="pills" id="hours">
+      <span class="pill" data-h="4">4 h</span>
+      <span class="pill on" data-h="4.5">4.5 h</span>
+      <span class="pill" data-h="5">5 h</span>
+    </div>
+
+    <label>Routing preferences</label>
+    <div class="pills" id="prefs">
+      <span class="pill on" data-p="paved">Paved only</span>
+      <span class="pill on" data-p="avoidBorders">Prefer easy borders</span>
+      <span class="pill on" data-p="avoidFlagged">Avoid flagged areas</span>
+      <span class="pill on" data-p="camps">Find campgrounds</span>
+      <span class="pill on" data-p="attractions">Tourist attractions</span>
+      <span class="pill" data-p="parks">🏞️ Nat'l & State parks</span>
+      <span class="pill" data-p="gyms">🏋️ Planet Fitness</span>
+      <span class="pill" data-p="thrift">👕 Thrift shops</span>
+      <span class="pill" data-p="climb">≤ 1000 m climb/day</span>
+      <span class="pill" data-p="ferries">Allow ferries</span>
+    </div>
+
+    <label>Attraction source</label>
+    <select id="attrSource" onchange="changeAttrSource()">
+      <option value="geonames">GeoNames — offline database (GT · MX · US)</option>
+      <option value="wikipedia">Wikipedia — articles near the route</option>
+      <option value="osm">OpenStreetMap — typed POIs</option>
+    </select>
+
+    <button id="go" class="primary" onclick="plan()">Plan itinerary</button>
+    <div style="text-align:right;margin-top:6px"><a href="#" style="font-size:11px" onclick="openSetup();return false">⚙︎ Manage API keys</a></div>
+    <div id="err"></div>
+
+    <div id="results"></div>
+
+    <div class="card" id="savecard">
+      <b style="font-size:13px">💾 Saved itineraries</b>
+      <div class="row" style="margin-top:8px">
+        <input id="itname" placeholder="Name this itinerary" />
+        <button class="ghost" style="flex:0 0 78px" onclick="saveItinerary()">Save</button>
+      </div>
+      <div id="saved"></div>
+      <button class="ghost" id="cmpbtn" style="width:100%;margin-top:10px;display:none" onclick="compareSelected()">Compare selected</button>
+    </div>
+
+    <div class="card" id="routecmp">
+      <b style="font-size:13px">⚖️ Compare routes (A → B)</b>
+      <p class="muted" style="font-size:12px;margin:4px 0 8px">Three alternative paths, scored on distance, time, pavement, safety &amp; climb.</p>
+      <input id="cmpFrom" list="places" placeholder="From — City, Country" style="margin-bottom:8px" />
+      <input id="cmpTo" list="places" placeholder="To — City, Country" />
+      <button class="ghost" id="cmpGo" style="width:100%;margin-top:10px" onclick="compareRoutes()">Compare routes</button>
+      <div id="cmpErr"></div>
+      <div id="cmpResults"></div>
+    </div>
+
+    <div class="foot">
+      Data: routing © OpenRouteService / OpenStreetMap contributors; elevation from SRTM;
+      cities, attractions &amp; parks © GeoNames; Planet Fitness data © <a href="https://simplemaps.com/data/business/planet-fitness" target="_blank" rel="noopener">SimpleMaps</a>.
+      The safety layer is <b>curated community/authority knowledge, not a live feed</b> — always verify with
+      official sources (US State Dept, UK FCDO, iOverlander, PanAm groups) before travel. Paved-only is best-effort
+      from OSM surface data.
+    </div>
+  </aside>
+  <main><div id="map"></div></main>
+</div>
+
+<div id="modal" class="modal" style="display:none">
+  <div class="modal-in">
+    <button class="ghost mini" style="float:right" onclick="closeModal()">✕</button>
+    <div id="modalbody"></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Central America Van Router
+   - OpenRouteService driving-hgv (van) with 3D elevation
+   - Daily stage splitting by cumulative drive time
+   - Curated safety/advisory layer (extend ADVISORIES below)
+   ============================================================ */
+
+const ORS = "https://api.openrouteservice.org";
+let apiKey = localStorage.getItem("ors_key") || "";
+let npsKey = localStorage.getItem("nps_key") || "";
+let map, routeLayer, markerLayer, advLayer, stageLayer, campLayer, attrLayer, compareLayer, gymLayer, parkLayer, thriftLayer;
+let lastPlan=null; // config + metrics of the most recent successful plan
+let planSeq=0;     // bumped each plan so stale async POI lookups don't overwrite newer results
+let attrSeq=0;     // separate token for attractions (source can be switched without a re-plan)
+let lastCoords=null; // geometry of the most recent route, for re-running attractions on source change
+let lastBounds=null; // latest map bounds, re-applied when switching to the mobile Map view
+
+/* Colorblind-safe qualitative palette (Okabe–Ito), ordered so adjacent
+   days stay distinct for deuteranopia/protanopia/tritanopia viewers. */
+const STAGE_COLORS = ["#E69F00","#0072B2","#009E73","#D55E00","#CC79A7","#56B4E9","#F0E442","#000000"];
+const US_SPEED_KMH = 80; // assumed average speed for route segments inside the US
+
+/* ---------- Curated seed data: known waypoints & advisories ----------
+   Sourced from public overlander knowledge (iOverlander, PanAm travel
+   blogs) and government travel notices. Extend freely — this is the
+   "public data" layer the route is checked against. */
+const PLACES = [
+  "Antigua, Guatemala","Guatemala City, Guatemala","Lake Atitlán, Guatemala","Río Dulce, Guatemala",
+  "Copán, Honduras","Tegucigalpa, Honduras","San Pedro Sula, Honduras",
+  "León, Nicaragua","Granada, Nicaragua","Managua, Nicaragua","San Juan del Sur, Nicaragua",
+  "Liberia, Costa Rica","La Fortuna, Costa Rica","Monteverde, Costa Rica","San José, Costa Rica",
+  "Manuel Antonio, Costa Rica","Boquete, Panama","David, Panama","Panama City, Panama",
+  "San Salvador, El Salvador","El Tunco, El Salvador"
+];
+
+// Advisory zones: {name, lat, lon, radiusKm, level: 'warn'|'danger', note}
+const ADVISORIES = [
+  {name:"Guatemala City – Zonas 3/6/18/21", lat:14.63, lon:-90.51, radiusKm:8, level:"warn",
+   note:"Urban crime hotspots. Transit on ring roads (CA-9/Periférico), don't park overnight in-city. Use guarded lots."},
+  {name:"San Pedro Sula metro", lat:15.50, lon:-88.03, radiusKm:15, level:"warn",
+   note:"Historically high violent-crime city. Drive through in daylight on CA-5; avoid stopping in the center."},
+  {name:"Honduras–Nicaragua: Guasaule/El Espino borders", lat:13.10, lon:-86.90, radiusKm:12, level:"warn",
+   note:"Long processing, fixers/'tramitadores'. Arrive early, keep documents in hand, budget 2–4h."},
+  {name:"Tegucigalpa transit", lat:14.07, lon:-87.19, radiusKm:9, level:"warn",
+   note:"Congested, opportunistic theft. Prefer bypassing via CA-5/CA-6; no night driving."},
+  {name:"Nicaragua interior – political checkpoints", lat:12.87, lon:-85.20, radiusKm:40, level:"warn",
+   note:"Police/army checkpoints common. Keep TIP & passport ready; remote areas have few services."},
+  {name:"Darién Gap (road ends)", lat:8.10, lon:-77.70, radiusKm:60, level:"danger",
+   note:"NO road connection Panama↔Colombia. Do NOT drive past Yaviza. Vehicle shipping (Colón→Cartagena) required."},
+  {name:"Costa Rica – Cerro de la Muerte (Ruta 2)", lat:9.56, lon:-83.75, radiusKm:12, level:"warn",
+   note:"Paved but 3,300 m pass, fog & steep grades. Cross midday, check brakes, expect slow trucks."},
+];
+
+/* ---------- init ---------- */
+function initMap(){
+  map = L.map("map",{zoomControl:true}).setView([13.5,-86.5],6);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
+    maxZoom:18, attribution:"© OpenStreetMap"}).addTo(map);
+  routeLayer = L.layerGroup().addTo(map);
+  stageLayer = L.layerGroup().addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+  advLayer = L.layerGroup().addTo(map);
+  campLayer = L.layerGroup().addTo(map);
+  attrLayer = L.layerGroup().addTo(map);
+  compareLayer = L.layerGroup().addTo(map);
+  gymLayer = L.layerGroup().addTo(map);
+  parkLayer = L.layerGroup().addTo(map);
+  thriftLayer = L.layerGroup().addTo(map);
+  drawAdvisories();
+  // datalist = curated overlander towns first, then all NA+CA cities >100k (deduped)
+  const seen=new Set(), all=[];
+  [...PLACES, ...(typeof CITY_PLACES!=="undefined"?CITY_PLACES:[])].forEach(p=>{
+    const k=p.toLowerCase(); if(!seen.has(k)){ seen.add(k); all.push(p); }
+  });
+  document.getElementById("places").innerHTML = all.map(p=>`<option value="${p.replace(/"/g,'&quot;')}">`).join("");
+  renderSaved();
+  // start with a clean itinerary (two empty stops)
+  addStop(); addStop();
+  if(!apiKey) document.getElementById("setup").style.display="block";
+}
+
+/* ---------- multi-stop management ---------- */
+function addStop(val=""){
+  const box=document.getElementById("stops");
+  const row=document.createElement("div");
+  row.className="row stop-row"; row.style.marginBottom="8px";
+  row.innerHTML=`<input class="stop" list="places" placeholder="City, Country" value="${val.replace(/"/g,'')}" />
+    <button class="ghost mini" title="Move up" onclick="moveStop(this,-1)">▲</button>
+    <button class="ghost mini" title="Move down" onclick="moveStop(this,1)">▼</button>
+    <button class="ghost mini" title="Remove" onclick="this.closest('.stop-row').remove();renumberStops()">✕</button>`;
+  box.appendChild(row); renumberStops();
+}
+function moveStop(btn,dir){
+  const row=btn.closest(".stop-row");
+  if(dir<0 && row.previousElementSibling) row.parentElement.insertBefore(row,row.previousElementSibling);
+  if(dir>0 && row.nextElementSibling)     row.parentElement.insertBefore(row.nextElementSibling,row);
+  renumberStops();
+}
+function renumberStops(){
+  const rows=[...document.querySelectorAll(".stop-row .stop")];
+  rows.forEach((inp,i)=>{
+    const role = i===0 ? "Origin" : (i===rows.length-1 ? "Destination" : "Stop "+i);
+    inp.setAttribute("placeholder", role+" — City, Country");
+  });
+}
+function getStops(){ return [...document.querySelectorAll(".stop")].map(i=>i.value.trim()).filter(Boolean); }
+function drawAdvisories(){
+  ADVISORIES.forEach(a=>{
+    const c = a.level==="danger" ? "#ff5c5c" : "#ffb020";
+    L.circle([a.lat,a.lon],{radius:a.radiusKm*1000,color:c,weight:1,fillColor:c,fillOpacity:.08})
+      .bindPopup(`<b>${a.name}</b><br>${a.note}`).addTo(advLayer);
+  });
+}
+function openSetup(){
+  const s=document.getElementById("setup"); s.style.display="block";
+  if(apiKey) document.getElementById("key").value=apiKey;
+  if(npsKey) document.getElementById("npskey").value=npsKey;
+  s.scrollIntoView({behavior:"smooth"});
+}
+function saveKey(){
+  const k=document.getElementById("key").value.trim();
+  const nk=document.getElementById("npskey").value.trim();
+  if(nk){ npsKey=nk; localStorage.setItem("nps_key",nk); }
+  if(!k) return;
+  apiKey=k; localStorage.setItem("ors_key",k);
+  document.getElementById("setup").style.display="none";
+}
+
+/* ---------- pill toggles ---------- */
+document.addEventListener("click",e=>{
+  const p=e.target.closest(".pill"); if(!p) return;
+  const group=p.parentElement.id;
+  if(group==="hours"){ [...p.parentElement.children].forEach(x=>x.classList.remove("on")); p.classList.add("on"); }
+  else p.classList.toggle("on");
+});
+function getHours(){ return parseFloat(document.querySelector("#hours .pill.on").dataset.h); }
+function getPref(name){ return !!document.querySelector(`#prefs .pill.on[data-p="${name}"]`); }
+
+/* mobile Plan/Map toggle: switch full-screen views and refresh Leaflet's size */
+function isMobile(){ return window.innerWidth<=820; }
+function setView(v){
+  document.body.classList.toggle("mapview", v==="map");
+  document.querySelectorAll("#mtabs .mtab").forEach(b=>b.classList.toggle("on", b.dataset.view===v));
+  if(v==="map" && map) setTimeout(()=>{ map.invalidateSize(); if(lastBounds) map.fitBounds(lastBounds.pad(0.1)); },60);
+}
+window.addEventListener("resize", ()=>{ if(map) map.invalidateSize(); });
+
+/* ---------- geocoding ---------- */
+async function geocode(text){
+  // bounding box: continental US + Mexico + Central America
+  const url=`${ORS}/geocode/search?api_key=${apiKey}&text=${encodeURIComponent(text)}`
+    +`&boundary.rect.min_lon=-125&boundary.rect.min_lat=6&boundary.rect.max_lon=-66&boundary.rect.max_lat=50&size=1`;
+  let r;
+  try{ r=await fetch(url); }
+  catch(e){ throw new Error(`Couldn’t reach the geocoder for “${text}” — network error, check your connection.`); }
+  if(r.status===401||r.status===403) throw new Error(`Geocoding rejected for “${text}” — check your OpenRouteService key (⚙︎ Manage API keys).`);
+  if(!r.ok) throw new Error(`Geocoding failed for “${text}” (HTTP ${r.status}).`);
+  const j=await r.json();
+  if(!j.features||!j.features.length) throw new Error(`Couldn’t find “${text}”. Try adding a state or country — e.g. “${text}, NV” or “${text}, USA”.`);
+  const f=j.features[0];
+  return {coord:f.geometry.coordinates, label:f.properties.label}; // [lon,lat]
+}
+
+/* ---------- routing ---------- */
+async function route(coordList){
+  const opts={};
+  const avoid=[];
+  if(!getPref("ferries")) avoid.push("ferries");
+  if(avoid.length) opts.avoid_features=avoid;
+  // van-ish profile params for driving-hgv
+  const body={
+    coordinates:coordList,
+    elevation:true,
+    instructions:true,
+    units:"km",
+    options:opts,
+    // discourage tracks/unpaved by weighting; hgv already avoids most
+    preference:"recommended"
+  };
+  const r=await fetch(`${ORS}/v2/directions/driving-hgv/geojson`,{
+    method:"POST",
+    headers:{"Authorization":apiKey,"Content-Type":"application/json"},
+    body:JSON.stringify(body)
+  });
+  if(!r.ok){
+    let m="Routing failed."; try{const e=await r.json(); m=e.error?.message||m;}catch{}
+    throw new Error(m);
+  }
+  return r.json();
+}
+
+/* ---------- helpers ---------- */
+function haversine(a,b){ // [lon,lat]
+  const R=6371,rad=Math.PI/180;
+  const dLat=(b[1]-a[1])*rad, dLon=(b[0]-a[0])*rad;
+  const s=Math.sin(dLat/2)**2+Math.cos(a[1]*rad)*Math.cos(b[1]*rad)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+function fmtH(sec){let h=Math.floor(sec/3600),m=Math.round(sec%3600/60);if(m===60){h++;m=0;}return h?`${h}h ${m}m`:`${m}m`;}
+
+/* Split route coordinates into daily stages by cumulative drive time. */
+function buildStages(coords, segments, maxSec, maxClimb){
+  // per-vertex cumulative duration using step durations spread over their sub-coords
+  const n=coords.length;
+  const cumT=new Array(n).fill(0), cumD=new Array(n).fill(0), cumG=new Array(n).fill(0);
+  // distance + climb cumulative (always available)
+  for(let i=1;i<n;i++){
+    cumD[i]=cumD[i-1]+haversine(coords[i-1],coords[i]);
+    const dz=(coords[i][2]??0)-(coords[i-1][2]??0);
+    cumG[i]=cumG[i-1]+(dz>0?dz:0);
+  }
+  // duration: distribute each step's duration across its waypoint span, proportional to distance
+  let filled=false;
+  segments.forEach(seg=>{
+    seg.steps.forEach(st=>{
+      const [s,e]=st.way_points; if(e<=s) return;
+      const spanD=cumD[e]-cumD[s]||1;
+      for(let i=s+1;i<=e;i++){
+        const frac=(cumD[i]-cumD[s])/spanD;
+        cumT[i]=(cumT[s]||cumT[i-1])+st.duration*frac;
+        filled=true;
+      }
+    });
+  });
+  if(!filled){ // fallback: assume avg 45 km/h
+    for(let i=1;i<n;i++) cumT[i]=cumD[i]/45*3600;
+  }
+  // US-average-speed override: segments inside the US are timed at a flat 80 km/h,
+  // segments elsewhere keep the ORS estimate. cumTadj is the adjusted cumulative time.
+  const cumTadj=new Array(n).fill(0);
+  for(let i=1;i<n;i++){
+    const segD=cumD[i]-cumD[i-1], orsSeg=cumT[i]-cumT[i-1];
+    const mid=[(coords[i-1][0]+coords[i][0])/2,(coords[i-1][1]+coords[i][1])/2];
+    const segT = inUS(mid) ? segD/US_SPEED_KMH*3600 : orsSeg;
+    cumTadj[i]=cumTadj[i-1]+segT;
+  }
+  // walk and cut when the day hits the time cap OR the climb cap
+  const stages=[]; let startIdx=0, dayStartT=0, dayStartG=0;
+  for(let i=1;i<n;i++){
+    const overTime = cumTadj[i]-dayStartT>=maxSec;
+    const overClimb = maxClimb>0 && cumG[i]-dayStartG>=maxClimb;
+    if(overTime || overClimb || i===n-1){
+      stages.push({s:startIdx,e:i,
+        dur:cumTadj[i]-dayStartT,
+        dist:cumD[i]-cumD[startIdx],
+        climb:cumG[i]-dayStartG,
+        cutBy: (i===n-1 ? "end" : (overClimb && !overTime ? "climb" : "time")),
+        coords:coords.slice(startIdx,i+1)});
+      startIdx=i; dayStartT=cumTadj[i]; dayStartG=cumG[i];
+    }
+  }
+  return stages;
+}
+
+/* Total drive time with the US 80 km/h override: US portion timed at 80 km/h,
+   the rest keeps its ORS-implied average. Used by the route-comparison view. */
+function usAdjustedTime(coords, orsDuration){
+  let total=0, usDist=0;
+  for(let i=1;i<coords.length;i++){
+    const d=haversine(coords[i-1],coords[i]); total+=d;
+    const mid=[(coords[i-1][0]+coords[i][0])/2,(coords[i-1][1]+coords[i][1])/2];
+    if(inUS(mid)) usDist+=d;
+  }
+  if(total<=0) return orsDuration;
+  return usDist/US_SPEED_KMH*3600 + orsDuration*((total-usDist)/total);
+}
+
+/* Elevation gain/loss + min/max from 3D coords */
+function elevStats(coords){
+  let gain=0,loss=0,min=Infinity,max=-Infinity;
+  for(let i=0;i<coords.length;i++){
+    const z=coords[i][2]??0; min=Math.min(min,z); max=Math.max(max,z);
+    if(i>0){const d=z-(coords[i-1][2]??0); if(d>0)gain+=d; else loss-=d;}
+  }
+  return {gain:Math.round(gain),loss:Math.round(loss),min:Math.round(min),max:Math.round(max)};
+}
+
+/* Which advisories does the route pass near? */
+function routeAdvisories(coords){
+  return ADVISORIES.filter(a=>{
+    const step=Math.max(1,Math.floor(coords.length/400));
+    for(let i=0;i<coords.length;i+=step){
+      if(haversine([a.lon,a.lat],coords[i])<=a.radiusKm) return true;
+    }
+    return false;
+  });
+}
+
+/* ---------- campgrounds via Overpass (live OpenStreetMap) ---------- */
+async function fetchCamps(points, radiusKm=20){
+  // points: [[lon,lat],...] overnight stops. One query, union of arounds.
+  // Broadened to iOverlander-style overnight categories OSM carries: established
+  // campgrounds, RV/caravan sites, individual pitches, and wilderness/mountain huts.
+  // nw = nodes + ways so sites mapped as areas are included too.
+  const around=points.map(p=>
+    `nw["tourism"~"^(camp_site|caravan_site|camp_pitch|wilderness_hut|alpine_hut)$"](around:${radiusKm*1000},${p[1]},${p[0]});`
+  ).join("\n");
+  const q=`[out:json][timeout:30];(${around});out center 120;`;
+  const kindMap={camp_site:"campground",caravan_site:"RV/caravan site",camp_pitch:"camp pitch",
+                 wilderness_hut:"wilderness hut",alpine_hut:"mountain hut"};
+  try{
+    const r=await fetch("https://overpass-api.de/api/interpreter",{
+      method:"POST",headers:{"Content-Type":"text/plain"},body:q});
+    if(!r.ok) return [];
+    const j=await r.json();
+    return (j.elements||[]).map(e=>{
+      const t=e.tags||{};
+      const lat=e.lat??(e.center&&e.center.lat), lon=e.lon??(e.center&&e.center.lon);
+      const kind=kindMap[t.tourism]||t.tourism||"campsite";
+      return { lat, lon,
+        name:(t.name||t["name:en"])||("Unnamed "+kind),
+        fee:t.fee, type:kind };
+    }).filter(c=>c.lat&&c.lon);
+  }catch{ return []; }
+}
+// Is a point in the continental US? (routes there use the NPS source)
+function inUS(pt){ return pt[0]>=-125 && pt[0]<=-66 && pt[1]>=24 && pt[1]<=49.5; }
+// Coarse country guess for building map-search links when a camp has no country field
+function countryFromCoord(lat,lon){
+  if(inUS([lon,lat])) return "USA";
+  if(lat>=12.9 && lat<=17.9 && lon>=-92.3 && lon<=-88.2) return "Guatemala";
+  if(lat>=14 && lat<=33 && lon>=-118 && lon<=-86) return "Mexico";
+  return "";
+}
+
+/* US national-park campgrounds via the official NPS Data API.
+   Source approach per the ParkPal writeup (developer.nps.gov). Fetched
+   once (all ~600 campgrounds), then filtered by distance client-side. */
+let npsCache=null;
+async function fetchNPScamps(){
+  if(npsCache) return npsCache;
+  if(!npsKey) return [];
+  const all=[]; let start=0;
+  try{
+    for(let page=0; page<3; page++){
+      const r=await fetch(`https://developer.nps.gov/api/v1/campgrounds?limit=500&start=${start}&api_key=${npsKey}`);
+      if(!r.ok) break;
+      const j=await r.json();
+      (j.data||[]).forEach(c=>{
+        let lat=parseFloat(c.latitude), lon=parseFloat(c.longitude);
+        if((!lat||!lon) && c.latLong){ // e.g. "lat:44.5, long:-110.5"
+          const m=c.latLong.match(/lat:\s*([-\d.]+).*long:\s*([-\d.]+)/i);
+          if(m){ lat=parseFloat(m[1]); lon=parseFloat(m[2]); }
+        }
+        if(lat&&lon) all.push({lat,lon,name:c.name,type:"NPS campground",
+          fee:(c.fees&&c.fees[0]&&c.fees[0].cost)?`$${c.fees[0].cost}`:undefined, url:c.url});
+      });
+      start+=500;
+      if(all.length >= (parseInt(j.total)||0)) break;
+    }
+  }catch{}
+  npsCache=all; return all;
+}
+
+// nearest camps to a point using an escalating radius: try 25 km first, then 50,
+// then 100 — so we return the closest cluster without overcrowding the map.
+function nearestCamps(camps, pt, max=4){
+  const withD=camps.map(c=>({...c,d:haversine([c.lon,c.lat],pt)})).sort((a,b)=>a.d-b.d);
+  for(const r of [25,50,100]){
+    const near=withD.filter(c=>c.d<=r);
+    if(near.length) return near.slice(0,max);
+  }
+  return [];
+}
+
+/* ---------- tourist attractions near the road (Wikipedia geosearch) ---------- */
+function samplePoints(coords, n){
+  const out=[]; const step=Math.max(1,Math.floor(coords.length/n));
+  for(let i=0;i<coords.length;i+=step) out.push(coords[i]);
+  if(out[out.length-1]!==coords[coords.length-1]) out.push(coords[coords.length-1]);
+  return out;
+}
+// sample a point roughly every stepKm along the route (guarantees 50 km circles overlap)
+function samplePointsByDist(coords, stepKm){
+  const out=[coords[0]]; let acc=0;
+  for(let i=1;i<coords.length;i++){ acc+=haversine(coords[i-1],coords[i]);
+    if(acc>=stepKm){ out.push(coords[i]); acc=0; } }
+  if(out[out.length-1]!==coords[coords.length-1]) out.push(coords[coords.length-1]);
+  return out;
+}
+function distToRoute(pt, coords){
+  let m=Infinity; const step=Math.max(1,Math.floor(coords.length/500));
+  for(let i=0;i<coords.length;i+=step){ const d=haversine(pt,coords[i]); if(d<m)m=d; }
+  return m;
+}
+// Attractions: Wikipedia geosearch (primary, ~10 km corridor, article links) merged
+// with OpenStreetMap/Overpass (secondary fill, wider ~50 km, typed features).
+const ATTR_SKIP=/\b(Department|Municipality|District|Province|Region|Prefecture|County|River|Lake|Basin|Range|Mountains|Cordillera|Volcanic Belt|Highway|Road|Airport|Census|Statistical Area|earthquake|election|massacre|battle|coup|hurricane)\b/i;
+
+// emoji icon per POI kind (works offline, no image assets)
+const KIND_ICON={
+ "archaeological site":"🏛️","historical site":"🏛️","ruins":"🏛️","monument":"🗿","memorial":"🗿",
+ "museum":"🏛️","pyramid":"🔺","pyramids":"🔺","castle":"🏰","fort":"🏰","palace":"🏰",
+ "monastery":"⛪","cathedral":"⛪","shrine":"⛩️","tomb":"⚰️","natural arch":"🏞️","lighthouse":"🗼",
+ "amphitheater":"🎭","opera house":"🎭","theater":"🎭","zoo":"🦁","botanical garden":"🌷",
+ "observatory":"🔭","spa":"♨️","volcano":"🌋","waterfall":"💧","cave":"🕳️","nature reserve":"🌲",
+ "wildlife reserve":"🦌","beach":"🏖️","viewpoint":"👁️","theme park":"🎡","artwork":"🎨","peak":"⛰️",
+ "attraction":"⭐","point of interest":"⭐"
+};
+function poiIcon(kind){ return KIND_ICON[kind]||"⭐"; }
+// canned one-liner when a source gives no real description
+const KIND_DESC={
+ "archaeological site":"Ancient / archaeological ruins.","historical site":"Site of historical importance.",
+ "ruins":"Historic ruins.","monument":"Commemorative monument.","memorial":"Memorial.","museum":"Museum.",
+ "pyramid":"Ancient pyramid.","pyramids":"Ancient pyramids.","castle":"Castle.","fort":"Historic fort.",
+ "palace":"Palace.","monastery":"Monastery.","cathedral":"Cathedral.","shrine":"Shrine.","tomb":"Tomb.",
+ "natural arch":"Natural rock arch.","lighthouse":"Lighthouse.","amphitheater":"Amphitheater.",
+ "opera house":"Opera house.","theater":"Theater.","zoo":"Zoo.","botanical garden":"Botanical garden.",
+ "observatory":"Observatory.","spa":"Spa / thermal baths.","volcano":"Volcano — natural landmark.",
+ "waterfall":"Waterfall.","cave":"Cave.","nature reserve":"Protected nature reserve.",
+ "wildlife reserve":"Wildlife reserve.","beach":"Beach.","viewpoint":"Scenic viewpoint.","peak":"Mountain peak."
+};
+
+async function fetchWikiAttractions(coords){
+  let step=14, pts=samplePointsByDist(coords, step);
+  while(pts.length>45){ step*=1.4; pts=samplePointsByDist(coords, step); }
+  const reqs=pts.map(p=>{
+    const url=`https://en.wikipedia.org/w/api.php?action=query&list=geosearch`
+      +`&gscoord=${p[1]}%7C${p[0]}&gsradius=10000&gslimit=30&format=json&origin=*`;
+    return fetch(url).then(r=>r.ok?r.json():null).catch(()=>null);
+  });
+  const results=await Promise.all(reqs);
+  const seen=new Set(), list=[];
+  results.forEach(j=>{
+    const g=(j&&j.query&&j.query.geosearch)||[];
+    g.forEach(x=>{
+      if(seen.has(x.pageid)) return; seen.add(x.pageid);
+      if(ATTR_SKIP.test(x.title)) return;
+      const d=distToRoute([x.lon,x.lat], coords);
+      if(d>12) return;
+      list.push({lat:x.lat, lon:x.lon, name:x.title, kind:"point of interest", d, pageid:x.pageid,
+        wiki:`https://en.wikipedia.org/?curid=${x.pageid}`, website:null, src:"wikipedia"});
+    });
+  });
+  list.sort((a,b)=>a.d-b.d);
+  const top=list.slice(0,120);
+  // fetch each article's short (Wikidata) description in chunks of 50 pageids
+  for(let i=0;i<top.length;i+=50){
+    const ids=top.slice(i,i+50).map(a=>a.pageid).join("|");
+    try{
+      const u=`https://en.wikipedia.org/w/api.php?action=query&prop=description&pageids=${ids}&format=json&origin=*`;
+      const j=await (await fetch(u)).json();
+      const pages=(j&&j.query&&j.query.pages)||{};
+      top.forEach(a=>{ const p=pages[a.pageid]; if(p&&p.description) a.desc=p.description; });
+    }catch{}
+  }
+  return top;
+}
+
+async function fetchOSMAttractions(coords){
+  let step=75, pts=samplePointsByDist(coords, step);
+  while(pts.length>20){ step*=1.5; pts=samplePointsByDist(coords, step); }
+  const parts=[];
+  pts.forEach(p=>{
+    const a=`around:50000,${p[1]},${p[0]}`;
+    parts.push(`nw["tourism"~"^(attraction|viewpoint|museum|theme_park|zoo)$"]["name"](${a});`);
+    parts.push(`nw["historic"~"^(archaeological_site|castle|monument|ruins|fort)$"]["name"](${a});`);
+    parts.push(`nw["natural"~"^(volcano|waterfall|peak)$"]["name"](${a});`);
+  });
+  const q=`[out:json][timeout:25];(${parts.join("")});out center 150;`;
+  try{
+    const r=await fetch("https://overpass-api.de/api/interpreter",{
+      method:"POST",headers:{"Content-Type":"text/plain"},body:q});
+    if(!r.ok) return [];
+    const j=await r.json();
+    const seen=new Set(), list=[];
+    (j.elements||[]).forEach(e=>{
+      const lat=e.lat??(e.center&&e.center.lat), lon=e.lon??(e.center&&e.center.lon);
+      if(!lat||!lon) return;
+      const id=e.type+e.id; if(seen.has(id)) return; seen.add(id);
+      const t=e.tags||{};
+      const kind=(t.tourism||t.historic||t.natural||"attraction").replace(/_/g," ");
+      const d=distToRoute([lon,lat], coords);
+      if(d>50) return;
+      let wiki=null;
+      if(t.wikipedia){ const m=t.wikipedia.split(":"); wiki=`https://${m[0]}.wikipedia.org/wiki/${encodeURIComponent(m.slice(1).join(":"))}`; }
+      else if(t.wikidata) wiki=`https://www.wikidata.org/wiki/${t.wikidata}`;
+      list.push({lat, lon, name:t.name, kind, d, wiki, website:t.website||t["contact:website"]||null,
+        desc:t.description||t["description:en"]||null, src:"osm"});
+    });
+    return list;
+  }catch{ return []; }
+}
+
+// GeoNames offline attractions (bundled for GT/MX/US) — instant, no network
+function fetchGeoNamesAttractions(coords){
+  if(typeof GEONAMES_ATTRACTIONS==="undefined") return [];
+  // padded route bounding box for a fast pre-filter over the 12k rows
+  let minLat=Infinity,maxLat=-Infinity,minLon=Infinity,maxLon=-Infinity;
+  for(const c of coords){ if(c[1]<minLat)minLat=c[1]; if(c[1]>maxLat)maxLat=c[1];
+    if(c[0]<minLon)minLon=c[0]; if(c[0]>maxLon)maxLon=c[0]; }
+  const pad=0.6; minLat-=pad; maxLat+=pad; minLon-=pad; maxLon+=pad;
+  const list=[];
+  for(const a of GEONAMES_ATTRACTIONS){
+    const lat=a[1], lon=a[2];
+    if(lat<minLat||lat>maxLat||lon<minLon||lon>maxLon) continue;
+    const d=distToRoute([lon,lat],coords);
+    if(d>50) continue;
+    list.push({lat, lon, name:a[0], kind:GEO_KIND[a[3]]||a[3], country:GEO_COUNTRY[a[4]],
+      d, wiki:null, website:null, src:"geonames"});
+  }
+  return list.sort((a,b)=>a.d-b.d).slice(0,120);
+}
+
+// Re-run just the attractions when the source dropdown changes (no full re-plan)
+function changeAttrSource(){
+  if(!lastCoords || !getPref("attractions")) return;
+  enrichAttractions(lastCoords);
+}
+// Dispatch on the user-selected source: GeoNames (default) · Wikipedia · OSM
+async function fetchAttractions(coords){
+  const src=(document.getElementById("attrSource")||{}).value||"geonames";
+  if(src==="wikipedia") return (await fetchWikiAttractions(coords)).sort((a,b)=>a.d-b.d).slice(0,120);
+  if(src==="osm")       return (await fetchOSMAttractions(coords)).sort((a,b)=>a.d-b.d).slice(0,120);
+  return fetchGeoNamesAttractions(coords);
+}
+
+/* ---------- saved itineraries (localStorage) ---------- */
+function loadStore(){ try{return JSON.parse(localStorage.getItem("itineraries")||"{}");}catch{return {};} }
+function saveStore(o){ localStorage.setItem("itineraries",JSON.stringify(o)); }
+function getPrefsObj(){ const o={}; document.querySelectorAll("#prefs .pill").forEach(p=>o[p.dataset.p]=p.classList.contains("on")); return o; }
+function setHours(h){ document.querySelectorAll("#hours .pill").forEach(p=>p.classList.toggle("on", parseFloat(p.dataset.h)===h)); }
+function setPrefs(obj){ document.querySelectorAll("#prefs .pill").forEach(p=>{ if(obj && p.dataset.p in obj) p.classList.toggle("on", !!obj[p.dataset.p]); }); }
+function downsampleProfile(coords, n=120){
+  const dists=[0]; let d=0;
+  for(let i=1;i<coords.length;i++){ d+=haversine(coords[i-1],coords[i]); dists.push(d); }
+  const total=d||1, out=[];
+  for(let k=0;k<=n;k++){
+    const target=total*k/n; let i=0;
+    while(i<dists.length-1 && dists[i]<target) i++;
+    out.push([+dists[i].toFixed(1), Math.round(coords[i][2]??0)]);
+  }
+  return out;
+}
+function saveItinerary(){
+  if(!lastPlan){ alert("Plan an itinerary first, then save it."); return; }
+  const name=document.getElementById("itname").value.trim();
+  if(!name){ alert("Give the itinerary a name."); return; }
+  const store=loadStore(); store[name]={...lastPlan, name, savedAt:Date.now()}; saveStore(store);
+  document.getElementById("itname").value=""; renderSaved();
+}
+function renderSaved(){
+  const store=loadStore(), box=document.getElementById("saved");
+  const names=Object.keys(store).sort();
+  if(!names.length){ box.innerHTML=`<p class="muted" style="font-size:12px;margin:8px 0 0">No saved itineraries yet — plan one, name it, and Save.</p>`;
+    document.getElementById("cmpbtn").style.display="none"; return; }
+  box.innerHTML=names.map(n=>{
+    const it=store[n], m=it.metrics, e=encodeURIComponent(n);
+    const from=it.stops&&it.stops[0], to=it.stops&&it.stops[it.stops.length-1];
+    const mid=it.stops&&it.stops.length>2?` (+${it.stops.length-2} stop${it.stops.length>3?"s":""})`:"";
+    return `<div class="saved-row">
+      <input type="checkbox" class="cmp" value="${e}" onchange="updateCmpBtn()" />
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600">${n}</div>
+        ${from?`<div class="meta">${from} → ${to}${mid}</div>`:``}
+        <div class="meta">${m.distance.toFixed(0)} km · ${fmtH(m.duration)} · ${m.days}d · ▲${m.gain} m</div>
+      </div>
+      <button class="ghost mini" title="Load & re-plan" onclick="loadItinerary('${e}')">↺</button>
+      <button class="ghost mini" title="Delete" onclick="deleteItinerary('${e}')">✕</button>
+    </div>`;
+  }).join("");
+  updateCmpBtn();
+}
+function updateCmpBtn(){
+  const n=document.querySelectorAll(".cmp:checked").length, b=document.getElementById("cmpbtn");
+  b.style.display=n>=2?"block":"none"; b.disabled=n>3;
+  b.textContent=n>3?"Select at most 3":`Compare selected (${n})`;
+}
+function applyItinerary(it){
+  document.getElementById("stops").innerHTML=""; it.stops.forEach(s=>addStop(s));
+  setHours(it.hours); setPrefs(it.prefs);
+  const sel=document.getElementById("attrSource"); if(sel && it.source) sel.value=it.source;
+}
+function loadItinerary(enc){
+  const it=loadStore()[decodeURIComponent(enc)]; if(!it) return;
+  applyItinerary(it); plan();
+}
+// On startup, restore the most recently saved itinerary (and auto-plan if a key is set)
+function loadLastItinerary(){
+  const store=loadStore(), names=Object.keys(store);
+  if(!names.length) return false;
+  const last=names.map(n=>store[n]).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0))[0];
+  applyItinerary(last);
+  if(apiKey) plan();
+  return true;
+}
+function deleteItinerary(enc){
+  const s=loadStore(); delete s[decodeURIComponent(enc)]; saveStore(s); renderSaved();
+}
+function closeModal(){ document.getElementById("modal").style.display="none"; }
+function compareSelected(){
+  const its=[...document.querySelectorAll(".cmp:checked")].slice(0,3)
+    .map(c=>loadStore()[decodeURIComponent(c.value)]).filter(Boolean);
+  if(its.length<2) return;
+  renderCompare(its);
+}
+function renderCompare(its){
+  const cols=its.map((it,i)=>({it,color:STAGE_COLORS[i%STAGE_COLORS.length]}));
+  // rows: [label, format(it), lowerIsBetter?]
+  const rows=[
+    ["Route", it=>`${it.stops[0]} → ${it.stops[it.stops.length-1]}`, null],
+    ["Waypoints", it=>it.stops.length, null],
+    ["Distance", it=>it.metrics.distance.toFixed(0)+" km", it=>it.metrics.distance],
+    ["Drive time", it=>fmtH(it.metrics.duration), it=>it.metrics.duration],
+    ["Days", it=>it.metrics.days+" d", it=>it.metrics.days],
+    ["Elevation gain", it=>"▲"+it.metrics.gain+" m", it=>it.metrics.gain],
+    ["Max altitude", it=>it.metrics.maxAlt+" m", null],
+    ["Advisories on route", it=>it.metrics.adv, it=>it.metrics.adv],
+    ["Max drive/day", it=>it.hours+" h", null],
+  ];
+  let html=`<h3 style="margin:0 0 4px;font-size:16px">Compare itineraries</h3>
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Green = best on that metric. Elevation profiles overlaid below.</p>
+    <div style="overflow-x:auto"><table class="cmp-table"><tr><th>Metric</th>${
+      cols.map(c=>`<th><span class="swatch" style="background:${c.color}"></span>${c.it.name}</th>`).join("")}</tr>`;
+  rows.forEach(([label,fmt,metric])=>{
+    let bestVal=null;
+    if(metric){ const vals=cols.map(c=>metric(c.it)); bestVal=Math.min(...vals); }
+    html+=`<tr><td style="color:var(--muted)">${label}</td>`;
+    cols.forEach(c=>{
+      const isBest=metric && metric(c.it)===bestVal;
+      html+=`<td class="${isBest?'best':''}">${fmt(c.it)}</td>`;
+    });
+    html+=`</tr>`;
+  });
+  html+=`</table></div>`;
+  html+=compareElevSVG(cols);
+  document.getElementById("modalbody").innerHTML=html;
+  document.getElementById("modal").style.display="flex";
+}
+function compareElevSVG(cols){
+  const profs=cols.filter(c=>c.it.profile&&c.it.profile.length);
+  if(!profs.length) return "";
+  const W=640,H=200,pad=28;
+  const maxD=Math.max(...profs.map(c=>c.it.profile[c.it.profile.length-1][0]))||1;
+  const maxZ=Math.max(...profs.flatMap(c=>c.it.profile.map(p=>p[1])));
+  const minZ=Math.min(...profs.flatMap(c=>c.it.profile.map(p=>p[1])));
+  const X=x=>pad+(x/maxD)*(W-2*pad);
+  const Y=z=>H-pad-((z-minZ)/((maxZ-minZ)||1))*(H-2*pad);
+  const lines=profs.map(c=>{
+    let d=`M ${X(c.it.profile[0][0])} ${Y(c.it.profile[0][1])}`;
+    c.it.profile.forEach(p=>d+=` L ${X(p[0])} ${Y(p[1])}`);
+    return `<path d="${d}" fill="none" stroke="${c.color}" stroke-width="1.8"/>`;
+  }).join("");
+  const legend=profs.map((c,i)=>`<text class="elabel" x="${W-pad}" y="${14+i*15}" text-anchor="end" font-size="11" fill="${c.color}">■ ${c.it.name}</text>`).join("");
+  return `<b style="font-size:13px;display:block;margin:14px 0 4px">Altitude profiles (km → m)</b>
+    <div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" style="width:100%;min-width:520px">
+      <line x1="${pad}" y1="${H-pad}" x2="${W-pad}" y2="${H-pad}" stroke="var(--line)"/>
+      ${lines}
+      <text class="elabel" x="2" y="${Y(maxZ)+4}">${Math.round(maxZ)}m</text>
+      <text class="elabel" x="2" y="${H-pad}">${Math.round(minZ)}m</text>
+      <text class="elabel" x="${W/2}" y="${H-6}" text-anchor="middle">${maxD.toFixed(0)} km</text>
+      ${legend}
+    </svg></div>`;
+}
+
+/* ---------- async enrichment (runs after core results are on screen) ---------- */
+// reverse-geocode a point to its nearest city/town name (ORS Pelias)
+async function reverseCity(lon,lat){
+  try{
+    const url=`${ORS}/geocode/reverse?api_key=${apiKey}&point.lon=${lon}&point.lat=${lat}&size=1`
+      +`&layers=locality,localadmin,borough,county,region`;
+    const r=await fetch(url); if(!r.ok) return null;
+    const j=await r.json(); const p=j.features&&j.features[0]&&j.features[0].properties;
+    if(!p) return null;
+    const city=p.locality||p.localadmin||p.borough||p.county;
+    return city ? (p.region && city!==p.region ? `${city}, ${p.region}` : city) : (p.region||p.name||null);
+  }catch{ return null; }
+}
+async function enrichCities(stages, token){
+  // boundary points: overall start + each day's overnight/end (= next day's start)
+  const pts=[stages[0].coords[0], ...stages.map(s=>s.coords[s.coords.length-1])];
+  const names=[];
+  for(const p of pts){ names.push(await reverseCity(p[0],p[1])); }
+  if(token!==planSeq) return; // superseded by a newer plan
+  stages.forEach((s,i)=>{ s.fromCity=names[i]; s.toCity=names[i+1]; s.citiesLoaded=true;
+    if(s._endMarker) s._endMarker.setPopupContent(`<b>Day ${i+1} overnight</b><br>${s.toCity||`near ${pts[i+1][1].toFixed(2)}, ${pts[i+1][0].toFixed(2)}`}`);
+  });
+  const box=document.getElementById("stagesCard"); if(box) box.innerHTML=stagesCardHTML(stages);
+}
+async function enrichCamps(stages, token){
+  //  · US overnight points  → official NPS Data API   · elsewhere → Overpass/OSM
+  //  · Mexico + Guatemala   → bundled iOverlander dataset (MX_GT_CAMPS)
+  const overnights=stages.map(s=>s.coords[s.coords.length-1]); // includes final dest
+  const usPts=overnights.filter(inUS), otherPts=overnights.filter(p=>!inUS(p));
+  let camps=[];
+  if(otherPts.length) camps=camps.concat(await fetchCamps(otherPts, 100));
+  if(usPts.length)    camps=camps.concat(await fetchNPScamps());
+  if(typeof MX_GT_CAMPS!=="undefined") camps=camps.concat(MX_GT_CAMPS.map(c=>({
+    lat:c.lat, lon:c.lon, name:c.name, type:"iOverlander campground", fee:null,
+    desc:c.desc, facilities:c.facilities, verified:c.verified, city:c.city, country:c.country })));
+  if(token!==planSeq) return; // a newer plan superseded this one
+  stages.forEach(st=>{ st.camps=nearestCamps(camps, st.coords[st.coords.length-1]); st.campsLoaded=true; });
+  // plot ONLY the camps chosen for each stage (escalated 25→50→100 km) — keeps the map uncluttered
+  const shown=new Map();
+  stages.forEach(st=>(st.camps||[]).forEach(c=>shown.set(`${c.lat},${c.lon},${c.name}`, c)));
+  shown.forEach(c=>{
+    // search Google Maps by NAME + city + country (coords can be approximate for recovered camps)
+    const q=[c.name, c.city, c.country||countryFromCoord(c.lat,c.lon)].filter(Boolean).join(", ");
+    const maps=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    const links=[c.url?`<a href="${c.url}" target="_blank" rel="noopener">Details</a>`:"",
+                 `<a href="${maps}" target="_blank" rel="noopener">Find on Google Maps</a>`].filter(Boolean).join(" · ");
+    const extra=[c.desc?c.desc:"", (c.facilities&&c.facilities.length)?`<i>${c.facilities.join(", ")}</i>`:"",
+                 c.verified?`verified ${c.verified}`:""].filter(Boolean).join("<br>");
+    L.circleMarker([c.lat,c.lon],{radius:5,color:"#04121f",weight:1,fillColor:"#009E73",fillOpacity:1})
+      .addTo(campLayer).bindPopup(`<b>⛺ ${c.name}</b><br>${c.type}${c.fee?` · fee: ${c.fee}`:""}${extra?`<br>${extra}`:""}<br>${links}`);
+  });
+  const box=document.getElementById("stagesCard"); if(box) box.innerHTML=stagesCardHTML(stages);
+}
+async function enrichAttractions(coords){
+  const token=++attrSeq;              // own token: source can change without a full re-plan
+  attrLayer.clearLayers();
+  const load=document.getElementById("attrCard"); if(load) load.innerHTML=attrCardHTML(undefined);
+  const attractions=await fetchAttractions(coords);
+  if(token!==attrSeq) return; // superseded by a newer attractions run
+  const icon=kind=>L.divIcon({className:"",html:`<div class="poi-pin">${poiIcon(kind)}</div>`,iconSize:[24,24],iconAnchor:[12,12]});
+  attractions.forEach(a=>{
+    const q=[a.name, a.country||countryFromCoord(a.lat,a.lon)].filter(Boolean).join(", ");
+    const maps=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    const links=[a.wiki?`<a href="${a.wiki}" target="_blank" rel="noopener">Wikipedia</a>`:"",
+                 a.website?`<a href="${a.website}" target="_blank" rel="noopener">Website</a>`:"",
+                 `<a href="${maps}" target="_blank" rel="noopener">Find on Google Maps</a>`].filter(Boolean).join(" · ");
+    const desc=a.desc || KIND_DESC[a.kind] || "";
+    L.marker([a.lat,a.lon],{icon:icon(a.kind)}).addTo(attrLayer)
+      .bindPopup(`<b>${poiIcon(a.kind)} ${a.name}</b><br><span class="muted">${a.kind} · ${a.d.toFixed(0)} km from route</span>${desc?`<br>${desc}`:""}<br>${links}`);
+  });
+  const box=document.getElementById("attrCard"); if(box) box.innerHTML=attrCardHTML(attractions);
+}
+
+// padded lat/lon bounding box of a route, for fast pre-filtering bundled datasets
+function bboxOfRoute(coords, pad){
+  let minLat=Infinity,maxLat=-Infinity,minLon=Infinity,maxLon=-Infinity;
+  for(const c of coords){ if(c[1]<minLat)minLat=c[1]; if(c[1]>maxLat)maxLat=c[1];
+    if(c[0]<minLon)minLon=c[0]; if(c[0]>maxLon)maxLon=c[0]; }
+  return {minLat:minLat-pad,maxLat:maxLat+pad,minLon:minLon-pad,maxLon:maxLon+pad};
+}
+// Planet Fitness branches within `maxKm` of the route (bundled OSM dataset)
+function enrichGyms(coords, token){
+  if(typeof PLANET_FITNESS==="undefined"){ return; }
+  const bb=bboxOfRoute(coords,0.4), maxKm=25, found=[];
+  for(const g of PLANET_FITNESS){
+    const lat=g[0], lon=g[1];
+    if(lat<bb.minLat||lat>bb.maxLat||lon<bb.minLon||lon>bb.maxLon) continue;
+    const d=distToRoute([lon,lat],coords); if(d>maxKm) continue;
+    found.push({lat,lon,city:g[2],region:g[3],d});
+  }
+  if(token!==planSeq) return;
+  found.sort((a,b)=>a.d-b.d);
+  const icon=L.divIcon({className:"",html:`<div class="poi-pin">🏋️</div>`,iconSize:[24,24],iconAnchor:[12,12]});
+  found.forEach(g=>{
+    const q=["Planet Fitness",g.city,g.region].filter(Boolean).join(", ");
+    const maps=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    const where=[g.city,g.region].filter(Boolean).join(", ");
+    L.marker([g.lat,g.lon],{icon}).addTo(gymLayer)
+      .bindPopup(`<b>🏋️ Planet Fitness</b>${where?`<br>${where}`:""}<br>${g.d.toFixed(0)} km from route<br><a href="${maps}" target="_blank" rel="noopener">Find on Google Maps</a>`);
+  });
+  const box=document.getElementById("gymCard");
+  if(box) box.innerHTML = found.length
+    ? `<div class="card"><b style="font-size:13px">🏋️ Planet Fitness on route (${found.length})</b>
+        <div class="muted" style="font-size:11px;margin:2px 0 6px">Within 25 km — showers &amp; 24h access. Nearest:</div>
+        ${found.slice(0,8).map(g=>`<div class="stat"><span>🏋️ ${[g.city,g.region].filter(Boolean).join(", ")||"Planet Fitness"}</span><b>${g.d.toFixed(0)} km</b></div>`).join("")}</div>`
+    : `<div class="card"><span class="muted" style="font-size:12px">No Planet Fitness within 25 km of this route.</span></div>`;
+}
+// National & State parks within `maxKm` of the route (bundled GeoNames dataset)
+function enrichParks(coords, token){
+  if(typeof PARKS==="undefined"){ return; }
+  const bb=bboxOfRoute(coords,0.6), maxKm=40, found=[];
+  for(const p of PARKS){
+    const lat=p[1], lon=p[2];
+    if(lat<bb.minLat||lat>bb.maxLat||lon<bb.minLon||lon>bb.maxLon) continue;
+    const d=distToRoute([lon,lat],coords); if(d>maxKm) continue;
+    found.push({name:p[0],lat,lon,type:p[3],country:(typeof PARK_COUNTRY!=="undefined"?PARK_COUNTRY[p[4]]:p[4]),d});
+  }
+  if(token!==planSeq) return;
+  found.sort((a,b)=>a.d-b.d);
+  found.forEach(p=>{
+    const emoji=p.type==="national"?"🏞️":"🌲";
+    const icon=L.divIcon({className:"",html:`<div class="poi-pin">${emoji}</div>`,iconSize:[24,24],iconAnchor:[12,12]});
+    const q=[p.name,p.country].filter(Boolean).join(", ");
+    const maps=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    L.marker([p.lat,p.lon],{icon}).addTo(parkLayer)
+      .bindPopup(`<b>${emoji} ${p.name}</b><br><span class="muted">${p.type==="national"?"National park":"State park"} · ${p.d.toFixed(0)} km from route</span><br><a href="${maps}" target="_blank" rel="noopener">Find on Google Maps</a>`);
+  });
+  const box=document.getElementById("parkCard");
+  if(box) box.innerHTML = found.length
+    ? `<div class="card"><b style="font-size:13px">🏞️ Parks on route (${found.length})</b>
+        <div class="muted" style="font-size:11px;margin:2px 0 6px">National 🏞️ &amp; state 🌲 parks within 40 km. Nearest:</div>
+        ${found.slice(0,10).map(p=>`<div class="stat"><span>${p.type==="national"?"🏞️":"🌲"} ${p.name}</span><b>${p.d.toFixed(0)} km</b></div>`).join("")}</div>`
+    : `<div class="card"><span class="muted" style="font-size:12px">No national/state parks within 40 km of this route.</span></div>`;
+}
+
+// Thrift / second-hand / charity clothing shops near the route (live OpenStreetMap)
+async function fetchThrift(coords){
+  // cap points and use exact-match/indexed clauses (no regex, no relations) so the
+  // multi-point union query stays under Overpass's runtime limit
+  let step=45, pts=samplePointsByDist(coords, step);
+  while(pts.length>11){ step*=1.4; pts=samplePointsByDist(coords, step); }
+  const parts=[];
+  pts.forEach(p=>{
+    const a=`around:30000,${p[1]},${p[0]}`;
+    parts.push(`nw["shop"="second_hand"]["name"](${a});`);
+    parts.push(`nw["shop"="charity"]["name"](${a});`);
+  });
+  const q=`[out:json][timeout:50];(${parts.join("")});out center 200;`;
+  try{
+    const r=await fetch("https://overpass-api.de/api/interpreter",{
+      method:"POST",headers:{"Content-Type":"text/plain"},body:q});
+    if(!r.ok) return [];
+    const j=await r.json();
+    const seen=new Set(), list=[];
+    (j.elements||[]).forEach(e=>{
+      const lat=e.lat??(e.center&&e.center.lat), lon=e.lon??(e.center&&e.center.lon);
+      if(!lat||!lon) return;
+      const id=e.type+e.id; if(seen.has(id)) return; seen.add(id);
+      const t=e.tags||{};
+      const kind = t.shop==="charity" ? "charity shop" : (t.shop==="clothes" ? "second-hand clothes" : "thrift / second-hand");
+      const d=distToRoute([lon,lat],coords); if(d>10) return; // only shops within 10 km of the route
+      list.push({lat,lon,name:t.name,kind,d,
+        city:t["addr:city"]||"", website:t.website||t["contact:website"]||null});
+    });
+    return list.sort((a,b)=>a.d-b.d).slice(0,120);
+  }catch{ return []; }
+}
+async function enrichThrift(coords, token){
+  const shops=await fetchThrift(coords);
+  if(token!==planSeq) return;
+  const icon=L.divIcon({className:"",html:`<div class="poi-pin">👕</div>`,iconSize:[24,24],iconAnchor:[12,12]});
+  shops.forEach(s=>{
+    const q=[s.name, s.city, "USA"].filter(Boolean).join(", ");
+    const maps=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    const links=[s.website?`<a href="${s.website}" target="_blank" rel="noopener">Website</a>`:"",
+                 `<a href="${maps}" target="_blank" rel="noopener">Find on Google Maps</a>`].filter(Boolean).join(" · ");
+    L.marker([s.lat,s.lon],{icon}).addTo(thriftLayer)
+      .bindPopup(`<b>👕 ${s.name}</b><br><span class="muted">${s.kind} · ${s.d.toFixed(0)} km from route</span><br>${links}`);
+  });
+  const box=document.getElementById("thriftCard");
+  if(box) box.innerHTML = shops.length
+    ? `<div class="card"><b style="font-size:13px">👕 Thrift shops on route (${shops.length})</b>
+        <div class="muted" style="font-size:11px;margin:2px 0 6px">Second-hand / charity shops within 10 km — Burning Man costume hunting. Nearest:</div>
+        ${shops.slice(0,10).map(s=>`<div class="stat"><span>👕 ${s.name} <span class="muted">(${s.kind})</span></span><b>${s.d.toFixed(0)} km</b></div>`).join("")}</div>`
+    : `<div class="card"><span class="muted" style="font-size:12px">No thrift/second-hand shops found within 10 km of this route.</span></div>`;
+}
+
+/* ============================================================
+   Route comparison — 3 alternative paths A→B, scored & ranked
+   ============================================================ */
+const SURFACE_PAVED=new Set([1,3,4,5,14]); // ORS surface codes: paved, asphalt, concrete, cobblestone, paving stones
+function surfaceBreakdown(feat){
+  const ex=feat.properties.extras && feat.properties.extras.surface;
+  if(!ex || !ex.summary) return null;
+  let paved=0, unknown=0, unpaved=0;
+  ex.summary.forEach(s=>{
+    if(s.value===0) unknown+=s.amount;
+    else if(SURFACE_PAVED.has(s.value)) paved+=s.amount;
+    else unpaved+=s.amount;
+  });
+  return {pavedPct:paved, unpavedPct:unpaved, unknownPct:unknown};
+}
+function safetyForRoute(coords){
+  const adv=routeAdvisories(coords);
+  const danger=adv.filter(a=>a.level==='danger').length;
+  const warn=adv.filter(a=>a.level!=='danger').length;
+  return {adv, danger, warn, penalty:danger*40+warn*15};
+}
+function scoreRoutes(routes){
+  const dists=routes.map(r=>r.distance), times=routes.map(r=>r.duration), climbs=routes.map(r=>r.climb||0);
+  const minDist=Math.min(...dists), minTime=Math.min(...times), minClimb=Math.min(...climbs), maxClimb=Math.max(...climbs);
+  routes.forEach(r=>{
+    const distScore=100*minDist/(r.distance||1);
+    const timeScore=100*minTime/(r.duration||1);
+    const climbScore=(maxClimb-minClimb)>0 ? 100*(1-((r.climb||0)-minClimb)/(maxClimb-minClimb)) : 100;
+    const paveScore=r.surf ? r.surf.pavedPct + r.surf.unknownPct*0.5 : 50; // no data → neutral
+    const safeScore=Math.max(0, 100-r.safety.penalty);
+    r.scores={dist:distScore,time:timeScore,climb:climbScore,pave:paveScore,safe:safeScore};
+    r.points=Math.round(paveScore*0.25 + safeScore*0.30 + timeScore*0.20 + distScore*0.15 + climbScore*0.10);
+  });
+}
+function drawCompareRoutes(routes, A, B){
+  compareLayer.clearLayers();
+  routeLayer.clearLayers(); stageLayer.clearLayers(); markerLayer.clearLayers(); campLayer.clearLayers(); attrLayer.clearLayers(); gymLayer.clearLayers(); parkLayer.clearLayers(); thriftLayer.clearLayers();
+  let bounds=null;
+  routes.forEach(r=>{
+    const latlngs=r.coords.map(c=>[c[1],c[0]]);
+    L.polyline(latlngs,{color:r.color,weight:5,opacity:.85}).addTo(compareLayer)
+      .bindPopup(`<b>Route ${r.i+1}</b> — ${r.points} pts<br>${r.distance.toFixed(0)} km · ${fmtH(r.duration)}`);
+    bounds = bounds ? bounds.extend(L.latLngBounds(latlngs)) : L.latLngBounds(latlngs);
+  });
+  L.marker([A.coord[1],A.coord[0]]).addTo(compareLayer).bindPopup("Start: "+A.label);
+  L.marker([B.coord[1],B.coord[0]]).addTo(compareLayer).bindPopup("End: "+B.label);
+  if(bounds){ lastBounds=bounds; map.fitBounds(bounds.pad(0.12)); }
+  if(isMobile()) setView("map");
+}
+function recoReason(best, routes){
+  const others=routes.filter(r=>r!==best);
+  if(!others.length) return "Only route found.";
+  const bits=[];
+  if(best.surf && others.every(r=>(r.surf?r.surf.pavedPct:0) < best.surf.pavedPct)) bits.push("most paved");
+  if(others.every(r=>r.safety.penalty > best.safety.penalty)) bits.push("safest");
+  if(others.every(r=>r.duration > best.duration)) bits.push("fastest");
+  if(others.every(r=>r.distance > best.distance)) bits.push("shortest");
+  if(others.every(r=>(r.climb||0) > (best.climb||0))) bits.push("least climbing");
+  return bits.length ? "Best on: "+bits.join(", ")+"." : "Best overall balance of the scored factors.";
+}
+function dataGaps(routes){
+  const g=[];
+  if(routes.some(r=>!r.surf || r.surf.unknownPct>40))
+    g.push("• <b>Pavement</b>: OSM surface data is incomplete on part of these routes. Verify with iOverlander, Google Street View, or recent satellite imagery.");
+  if(routes.every(r=>r.safety.adv.length===0))
+    g.push("• <b>Safety</b>: no curated advisory zones intersect these routes (coverage is limited). Check <a href='https://travel.state.gov' target='_blank' rel='noopener'>US State Dept</a>, <a href='https://www.gov.uk/foreign-travel-advice' target='_blank' rel='noopener'>UK FCDO</a>, and iOverlander/PanAm groups for current local conditions.");
+  return g;
+}
+function renderRouteCompare(routes, A, B){
+  routes=[...routes].sort((a,b)=>b.points-a.points);
+  const best=routes[0];
+  let html="";
+  if(routes.length<3) html+=`<div class="meta" style="margin:6px 0">ORS returned ${routes.length} distinct route${routes.length>1?"s":""} — it couldn't find 3 sufficiently different alternatives for this pair.</div>`;
+  const rows=[
+    ["Distance", r=>r.distance.toFixed(0)+" km"],
+    ["Driving time", r=>fmtH(r.duration)],
+    ["Pavement", r=> r.surf ? `${r.surf.pavedPct.toFixed(0)}% paved`+(r.surf.unknownPct>15?` <span class="muted">(${r.surf.unknownPct.toFixed(0)}% unknown)</span>`:"") : `<span class="muted">n/a</span>`],
+    ["Safety", r=> r.safety.danger ? `⛔ ${r.safety.danger} no-go`+(r.safety.warn?`, ${r.safety.warn}⚠️`:"") : (r.safety.warn?`⚠️ ${r.safety.warn} caution`:"✓ clear")],
+    ["Climb", r=>"▲"+Math.round(r.climb)+" m"],
+    ["Points", r=>`<b class="${r===best?'':''}" style="color:${r===best?'var(--accent2)':'var(--txt)'}">${r.points}</b>`],
+  ];
+  html+=`<div style="overflow-x:auto"><table class="cmp-table"><tr><th>Metric</th>${
+    routes.map(r=>`<th><span class="swatch" style="background:${r.color}"></span>Route ${r.i+1}${r===best?" 🏆":""}</th>`).join("")}</tr>`;
+  rows.forEach(([label,fmt])=>{
+    html+=`<tr><td class="muted">${label}</td>${routes.map(r=>`<td>${fmt(r)}</td>`).join("")}</tr>`;
+  });
+  html+=`</table></div>`;
+  html+=`<div class="stage" style="border-color:${best.color};margin-top:10px"><b>🏆 Recommended: Route ${best.i+1}</b> — ${best.points} pts<div class="meta">${recoReason(best, routes)} · ${best.distance.toFixed(0)} km · ${fmtH(best.duration)} · ▲${Math.round(best.climb)} m</div></div>`;
+  const gaps=dataGaps(routes);
+  if(gaps.length) html+=`<div class="adv" style="margin-top:10px"><b>Missing data — where to verify</b>${gaps.join("")}</div>`;
+  html+=`<div class="muted" style="font-size:11px;margin-top:8px">Points = pavement 25% · safety 30% · time 20% · distance 15% · climb 10%.</div>`;
+  return html;
+}
+// A via-point offset `km` perpendicular to the A→B line at fraction `frac` along it.
+// Used to force distinct alternative routes (ORS alternative_routes caps at 100 km total).
+function offsetVia(A,B,km,frac){
+  const baseLon=A[0]+(B[0]-A[0])*frac, baseLat=A[1]+(B[1]-A[1])*frac;
+  const cos=Math.cos(baseLat*Math.PI/180)||1;
+  let dx=(B[0]-A[0])*cos, dy=(B[1]-A[1]); const len=Math.hypot(dx,dy)||1; dx/=len; dy/=len;
+  const px=-dy, py=dx; // perpendicular unit
+  return [baseLon+(px*km)/(111*cos), baseLat+(py*km)/111];
+}
+async function orsRoute(coordList){
+  const body={coordinates:coordList, elevation:true, instructions:false, units:"km", extra_info:["surface"]};
+  const r=await fetch(`${ORS}/v2/directions/driving-hgv/geojson`,{
+    method:"POST", headers:{"Authorization":apiKey,"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  if(!r.ok){ let m="route failed"; try{const e=await r.json(); m=(e.error&&e.error.message)||m;}catch{} throw new Error(m); }
+  const gj=await r.json(); return gj.features&&gj.features[0];
+}
+async function compareRoutes(){
+  const err=document.getElementById("cmpErr"); err.innerHTML="";
+  const res=document.getElementById("cmpResults"); res.innerHTML="";
+  const btn=document.getElementById("cmpGo");
+  const fromT=document.getElementById("cmpFrom").value.trim(), toT=document.getElementById("cmpTo").value.trim();
+  if(!apiKey){ openSetup(); err.innerHTML=`<div class="err">Add your OpenRouteService key first.</div>`; return; }
+  if(!fromT||!toT){ err.innerHTML=`<div class="err">Enter both a source and a destination.</div>`; return; }
+  btn.disabled=true; btn.innerHTML=`<span class="spinner"></span>Finding routes…`;
+  try{
+    const A=await geocode(fromT), B=await geocode(toT);
+    // build candidate paths: direct + perpendicular-offset vias (both sides, several
+    // positions & magnitudes) so we can surface up to 3 genuinely distinct corridors
+    const straight=haversine(A.coord,B.coord);
+    const off=Math.max(20, Math.min(140, straight*0.14));
+    const cands=[[A.coord, B.coord]];
+    [0.35,0.5,0.65].forEach(fr=>{
+      cands.push([A.coord, offsetVia(A.coord,B.coord, off, fr), B.coord]);
+      cands.push([A.coord, offsetVia(A.coord,B.coord,-off, fr), B.coord]);
+    });
+    cands.push([A.coord, offsetVia(A.coord,B.coord, off*1.8, 0.5), B.coord]);
+    cands.push([A.coord, offsetVia(A.coord,B.coord,-off*1.8, 0.5), B.coord]);
+    const settled=await Promise.allSettled(cands.map(orsRoute));
+    let feats=settled.filter(s=>s.status==="fulfilled" && s.value).map(s=>s.value);
+    if(!feats.length){
+      const firstErr=settled.find(s=>s.status==="rejected");
+      throw new Error(firstErr ? firstErr.reason.message : "No routes found for this pair.");
+    }
+    // dedupe near-identical results (different vias often snap to the same roads);
+    // signature samples three points along the path so distinct corridors are kept
+    const sigs=new Set(), uniq=[];
+    feats.sort((a,b)=>a.properties.summary.distance-b.properties.summary.distance).forEach(f=>{
+      const c=f.geometry.coordinates;
+      const pk=fr=>{const p=c[Math.floor(c.length*fr)]; return p[0].toFixed(1)+","+p[1].toFixed(1);};
+      const sig=`${Math.round(f.properties.summary.distance/12)}|${pk(0.25)}|${pk(0.5)}|${pk(0.75)}`;
+      if(!sigs.has(sig)){ sigs.add(sig); uniq.push(f); }
+    });
+    const routes=uniq.slice(0,3).map((f,i)=>{
+      const coords=f.geometry.coordinates;
+      return { i, coords, color:STAGE_COLORS[i%STAGE_COLORS.length],
+        distance:f.properties.summary.distance, duration:usAdjustedTime(coords, f.properties.summary.duration),
+        climb:elevStats(coords).gain, surf:surfaceBreakdown(f), safety:safetyForRoute(coords) };
+    });
+    scoreRoutes(routes);
+    drawCompareRoutes(routes, A, B);
+    res.innerHTML=renderRouteCompare(routes, A, B);
+  }catch(e){
+    err.innerHTML=`<div class="err">${e.message}</div>`;
+  }finally{
+    btn.disabled=false; btn.textContent="Compare routes";
+  }
+}
+
+/* ---------- main ---------- */
+async function plan(){
+  const err=document.getElementById("err"); err.innerHTML="";
+  const btn=document.getElementById("go");
+  const stopTexts=getStops();
+  if(!apiKey){ document.getElementById("setup").style.display="block"; err.innerHTML=`<div class="err">Add your free OpenRouteService key first.</div>`; return; }
+  if(stopTexts.length<2){ err.innerHTML=`<div class="err">Enter at least an origin and a destination.</div>`; return; }
+
+  const token=++planSeq; // identifies this plan run for async enrichment
+  btn.disabled=true; btn.innerHTML=`<span class="spinner"></span>Planning…`;
+  try{
+    // geocode every stop (sequential to stay under rate limits)
+    const stops=[];
+    for(const t of stopTexts) stops.push(await geocode(t));
+    const A=stops[0], B=stops[stops.length-1];
+
+    const gj=await route(stops.map(s=>s.coord));
+    const feat=gj.features[0];
+    const coords=feat.geometry.coordinates;           // [lon,lat,elev]
+    const summary=feat.properties.summary;            // {distance(km),duration(s)}
+    const segments=feat.properties.segments||[];
+
+    // draw base route + waypoint markers
+    routeLayer.clearLayers(); markerLayer.clearLayers(); stageLayer.clearLayers(); campLayer.clearLayers(); attrLayer.clearLayers(); compareLayer.clearLayers(); gymLayer.clearLayers(); parkLayer.clearLayers(); thriftLayer.clearLayers();
+    const latlngs=coords.map(c=>[c[1],c[0]]);
+    L.polyline(latlngs,{color:"var(--route)",weight:5,opacity:.9}).addTo(routeLayer);
+    stops.forEach((s,i)=>{
+      const role=i===0?"Start":(i===stops.length-1?"End":"Stop "+i);
+      L.marker([s.coord[1],s.coord[0]]).addTo(markerLayer).bindPopup(`<b>${role}:</b> ${s.label}`);
+    });
+    lastBounds=L.latLngBounds(latlngs); map.fitBounds(lastBounds.pad(0.1));
+
+    const maxSec=getHours()*3600;
+    const maxClimb=getPref("climb")?1000:0;
+    const stages=buildStages(coords,segments,maxSec,maxClimb);
+    // total drive time reflects the US 80 km/h override (sum of adjusted stage times)
+    summary.duration=stages.reduce((a,s)=>a+s.dur,0);
+    const el=elevStats(coords);
+    const adv=routeAdvisories(coords);
+
+    // stage lines + overnight markers (colorblind-safe palette)
+    stages.forEach((st,i)=>{
+      const c=STAGE_COLORS[i%STAGE_COLORS.length];
+      L.polyline(st.coords.map(c=>[c[1],c[0]]),{color:c,weight:6,opacity:.85}).addTo(stageLayer);
+      const end=st.coords[st.coords.length-1];
+      st._endMarker=L.circleMarker([end[1],end[0]],{radius:6,color:"#fff",weight:2,fillColor:c,fillOpacity:1})
+        .addTo(stageLayer).bindPopup(`<b>End of Day ${i+1}</b><br>locating…`);
+    });
+
+    // remember this plan for saving / comparison (metrics don't depend on POI lookups)
+    lastPlan={ stops:stops.map(s=>s.label), hours:getHours(), prefs:getPrefsObj(),
+      source:(document.getElementById("attrSource")||{}).value||"geonames",
+      metrics:{distance:summary.distance, duration:summary.duration, days:stages.length,
+        gain:el.gain, loss:el.loss, maxAlt:el.max, minAlt:el.min, adv:adv.length},
+      profile:downsampleProfile(coords) };
+
+    // render the CORE results immediately — distance, drive time, days, stages,
+    // elevation, advisories. Campgrounds & attractions are slow network lookups,
+    // so we fill them in afterwards instead of blocking these numbers.
+    if(getPref("camps")) stages.forEach(s=>s.campsLoaded=false);
+    stages.forEach(s=>s.citiesLoaded=false);
+    renderResults({A,B,summary,stages,el,adv,coords,attractions:undefined});
+    if(isMobile()) setView("map"); // on a phone, jump to the map to show the route
+
+    // enrich asynchronously; a stale-plan token stops old lookups clobbering newer results
+    lastCoords=coords;
+    enrichCities(stages, token);
+    if(getPref("camps")) enrichCamps(stages, token);
+    if(getPref("attractions")) enrichAttractions(coords);
+    if(getPref("parks")) enrichParks(coords, token);
+    if(getPref("gyms")) enrichGyms(coords, token);
+    if(getPref("thrift")) enrichThrift(coords, token);
+  }catch(e){
+    err.innerHTML=`<div class="err">${e.message}</div>`;
+  }finally{
+    btn.disabled=false; btn.textContent="Plan itinerary";
+  }
+}
+
+function stagesCardHTML(stages){
+  return `<b style="font-size:13px">📅 Daily stages (≤ ${getHours()} h/day${getPref("climb")?", ≤ 1000 m climb":""})</b>
+    ${stages.map((s,i)=>{
+      const end=s.coords[s.coords.length-1];
+      const camps=s.camps||[];
+      const campHtml = camps.length
+        ? `<div class="meta" style="margin-top:5px">⛺ ${camps.map(c=>`${c.name} (${c.d.toFixed(0)} km)`).join(" · ")}</div>`
+        : (getPref("camps")
+            ? (s.campsLoaded===false
+                ? `<div class="meta" style="margin-top:5px;opacity:.6"><span class="spinner" style="width:10px;height:10px;border-color:#9994;border-top-color:#999"></span> finding campgrounds…</div>`
+                : `<div class="meta" style="margin-top:5px;opacity:.7">⛺ no campground within 100 km — check iOverlander</div>`)
+            : ``);
+      const cut = s.cutBy==="climb" ? " · <span style='color:var(--warn)'>climb-capped</span>" : "";
+      const route = s.citiesLoaded
+        ? `📍 ${s.fromCity||"start"} → <b style="color:var(--txt)">${s.toCity||`overnight (${end[1].toFixed(2)}, ${end[0].toFixed(2)})`}</b>`
+        : `<span class="spinner" style="width:10px;height:10px;border-color:#9994;border-top-color:#999"></span> locating cities…`;
+      return `<div class="stage" style="border-color:${STAGE_COLORS[i%STAGE_COLORS.length]}">
+        <h4>Day ${i+1}</h4>
+        <div class="meta">${route}</div>
+        <div class="meta">${s.dist.toFixed(0)} km · ${fmtH(s.dur)} · ▲${(s.climb||0).toFixed(0)} m${cut}</div>
+        ${campHtml}
+      </div>`;}).join("")}`;
+}
+function attrCardHTML(attractions){
+  if(!getPref("attractions")) return "";
+  if(attractions===undefined) return `<div class="card"><span class="muted" style="font-size:12px"><span class="spinner" style="width:12px;height:12px;border-color:#9994;border-top-color:#999"></span> Finding attractions near the route…</span></div>`;
+  if(attractions.length) return `<div class="card"><b style="font-size:13px">★ Attractions near the route (${attractions.length})</b>
+      <div class="muted" style="font-size:11px;margin:2px 0 6px">Click purple pins on the map for details. Nearest to the road:</div>
+      ${attractions.slice(0,10).map(a=>`<div class="stat"><span>${poiIcon(a.kind)} ${a.name} <span class="muted">(${a.kind})</span></span><b>${a.d.toFixed(0)} km</b></div>`).join("")}</div>`;
+  return `<div class="card"><span class="muted" style="font-size:12px">No Wikipedia attractions found near this route.</span></div>`;
+}
+function renderResults({A,B,summary,stages,el,adv,coords,attractions}){
+  const days=stages.length;
+  const R=document.getElementById("results");
+  R.innerHTML=`
+    <div class="card">
+      <div class="stat"><span class="muted">Distance</span><b>${summary.distance.toFixed(0)} km</b></div>
+      <div class="stat"><span class="muted">Total drive time</span><b>${fmtH(summary.duration)}</b></div>
+      <div class="stat"><span class="muted">Daily stages</span><b>${days} day${days>1?"s":""}</b></div>
+      <div class="stat"><span class="muted">Elevation gain / loss</span><b>▲${el.gain} m / ▼${el.loss} m</b></div>
+      <div class="stat"><span class="muted">Altitude range</span><b>${el.min}–${el.max} m</b></div>
+    </div>
+
+    <div class="card">
+      <b style="font-size:13px">Altitude profile</b>
+      <svg id="elev" viewBox="0 0 360 150" preserveAspectRatio="none"></svg>
+      <div class="muted" style="font-size:11px">Distance → · vertical lines = overnight stops</div>
+    </div>
+
+    <div class="card" id="stagesCard">${stagesCardHTML(stages)}</div>
+
+    ${adv.length?`<div class="card"><b style="font-size:13px">⚠️ Advisories on this route</b>
+      ${adv.map(a=>`<div class="adv ${a.level==='danger'?'danger':''}"><b>${a.name}</b>${a.note}</div>`).join("")}
+    </div>`:`<div class="card"><span class="muted" style="font-size:12px">No flagged advisory zones intersect this route (per curated data). Still verify locally.</span></div>`}
+
+    <div id="attrCard">${attrCardHTML(attractions)}</div>
+    <div id="parkCard"></div>
+    <div id="gymCard"></div>
+    <div id="thriftCard"></div>
+
+    <details open>
+      <summary>Why this route?</summary>
+      ${explain({A,B,summary,stages,el,adv})}
+    </details>
+  `;
+  drawElev(coords,stages);
+}
+
+function explain({A,B,summary,stages,el,adv}){
+  const avg=(summary.distance/(summary.duration/3600)).toFixed(0);
+  const hasUS=stages.some(s=>s.coords.some((c,i)=>i%20===0 && inUS(c)));
+  const bits=[];
+  bits.push(`<b>${A.label}</b> → <b>${B.label}</b>, ${summary.distance.toFixed(0)} km over ${fmtH(summary.duration)} of driving.`);
+  bits.push(`<ul class="why">`);
+  bits.push(`<li><b>Vehicle profile:</b> routed with the <b>heavy-vehicle (van)</b> engine, so it favors primary/secondary highways (CA-1/Pan-American and national routes) wide enough for a van and avoids narrow tracks.</li>`);
+  bits.push(`<li><b>Paved-first:</b> ${getPref("paved")?"unpaved tracks are de-weighted using OSM surface data":"paved preference off"} — the corridor sticks to sealed roads where OSM knows the surface. Verify any final dirt access to campsites yourself.</li>`);
+  const climbCut=stages.filter(s=>s.cutBy==="climb").length;
+  bits.push(`<li><b>Daily limit:</b> split into <b>${stages.length} stage${stages.length>1?"s":""}</b> so no day exceeds <b>${getHours()} h</b> of driving${getPref("climb")?` <b>or 1000 m of climbing</b>${climbCut?` (${climbCut} day${climbCut>1?"s were":" was"} cut short by the climb cap)`:""}`:""} (avg pace ≈ ${avg} km/h incl. terrain). Overnight points fall roughly where the budget runs out — nudge them to the nearest town/campground.${hasUS?` <b>US legs are timed at ${US_SPEED_KMH} km/h average.</b>`:""}</li>`);
+  bits.push(`<li><b>Terrain:</b> ${el.gain} m of climbing, topping out at <b>${el.max} m</b>. ${el.max>2500?"Expect a high mountain pass — cool temps, fog, and low power; cross midday with good brakes.":"Moderate grades overall."}</li>`);
+  if(adv.length){
+    const d=adv.filter(a=>a.level==='danger').length;
+    bits.push(`<li><b>Safety:</b> passes near <b>${adv.length}</b> flagged area${adv.length>1?"s":""}${d?` (incl. ${d} do-not-drive)`:''}. See advisories above — these come from public travel notices & overlander reports, not a live feed.</li>`);
+  } else {
+    bits.push(`<li><b>Safety:</b> no curated advisory zones intersect this line. Still check State Dept / FCDO and iOverlander for current conditions.</li>`);
+  }
+  bits.push(`<li><b>Ferries:</b> ${getPref("ferries")?"allowed":"avoided (kept fully overland)"}.</li>`);
+  bits.push(`</ul>`);
+  return bits.join("");
+}
+
+/* ---------- elevation SVG ---------- */
+function drawElev(coords,stages){
+  const svg=document.getElementById("elev"); if(!svg) return;
+  const W=360,H=150,pad=18;
+  // cumulative distance vs elevation
+  const pts=[]; let d=0;
+  for(let i=0;i<coords.length;i++){
+    if(i>0) d+=haversine(coords[i-1],coords[i]);
+    pts.push([d, coords[i][2]??0]);
+  }
+  const maxD=d||1;
+  const zs=pts.map(p=>p[1]); const minZ=Math.min(...zs),maxZ=Math.max(...zs)||1;
+  const X=x=>pad+(x/maxD)*(W-2*pad);
+  const Y=z=>H-pad-((z-minZ)/((maxZ-minZ)||1))*(H-2*pad);
+  let path=`M ${X(pts[0][0])} ${Y(pts[0][1])}`;
+  const step=Math.max(1,Math.floor(pts.length/700));
+  for(let i=step;i<pts.length;i+=step) path+=` L ${X(pts[i][0])} ${Y(pts[i][1])}`;
+  const area=path+` L ${X(maxD)} ${H-pad} L ${X(0)} ${H-pad} Z`;
+  // stage divider distances
+  let cum=0; const cuts=[];
+  stages.forEach((s,i)=>{ if(i<stages.length-1){ cum+=s.dist; cuts.push(cum); } });
+  svg.innerHTML=`
+    <defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#3aa0ff" stop-opacity=".6"/>
+      <stop offset="1" stop-color="#3aa0ff" stop-opacity="0"/></linearGradient></defs>
+    <path d="${area}" fill="url(#g)"/>
+    <path d="${path}" fill="none" stroke="#3aa0ff" stroke-width="1.6"/>
+    ${cuts.map(c=>`<line x1="${X(c)}" y1="${pad}" x2="${X(c)}" y2="${H-pad}" stroke="#ffb020" stroke-width="1" stroke-dasharray="3 3"/>`).join("")}
+    <text class="elabel" x="2" y="${Y(maxZ)+3}">${Math.round(maxZ)}m</text>
+    <text class="elabel" x="2" y="${H-pad}">${Math.round(minZ)}m</text>
+    <text class="elabel" x="${W-pad}" y="${H-4}" text-anchor="end">${maxD.toFixed(0)} km</text>
+  `;
+}
+
+initMap();
+</script>
+</body>
+</html>
