@@ -11,3 +11,6 @@ ha-bundle/
 
 # Archives
 *.zip
+
+# Local API keys — never commit (real keys must not be published)
+config.local.js

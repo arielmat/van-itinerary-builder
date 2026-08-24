@@ -19,6 +19,10 @@
 <script src="gyms_planet_fitness.js"></script>
 <!-- National & State parks (GeoNames GT/MX/US) -->
 <script src="parks.js"></script>
+<!-- Keys: config.js holds committed defaults (public — burner keys only);
+     config.local.js is git-ignored and overrides it on machines you control. -->
+<script src="config.js" onerror="/* no committed default keys — that's fine */"></script>
+<script src="config.local.js" onerror="/* absent on public deploys — that's fine */"></script>
 
 <style>
   :root{
@@ -215,8 +219,10 @@
    ============================================================ */
 
 const ORS = "https://api.openrouteservice.org";
-let apiKey = localStorage.getItem("ors_key") || "";
-let npsKey = localStorage.getItem("nps_key") || "";
+// Keys: saved localStorage value wins; otherwise an optional local config.local.js
+// (window.VAN_KEYS) can pre-fill them so your own machines never prompt.
+let apiKey = localStorage.getItem("ors_key") || (window.VAN_KEYS && window.VAN_KEYS.ors) || "";
+let npsKey = localStorage.getItem("nps_key") || (window.VAN_KEYS && window.VAN_KEYS.nps) || "";
 let map, routeLayer, markerLayer, advLayer, stageLayer, campLayer, attrLayer, compareLayer, gymLayer, parkLayer, thriftLayer;
 let lastPlan=null; // config + metrics of the most recent successful plan
 let planSeq=0;     // bumped each plan so stale async POI lookups don't overwrite newer results
