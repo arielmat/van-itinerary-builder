@@ -11,6 +11,6 @@
  *      which overrides this file — see config.local.example.js.)
  * ------------------------------------------------------------------------- */
 window.VAN_KEYS = {
-  ors: "",   // <-- paste your OpenRouteService key here
-  nps: ""    // optional: US national-park campgrounds key
+  ors: "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjdlNTNjYzQ1Yzk5MjQxMDY4ODZmYzBhODQyM2QzYTQ2IiwiaCI6Im11cm11cjY0In0=",   // <-- paste your OpenRouteService key here
+  nps: "TaZC7YoCqvgtYX0iZQ0L2gQTTIoskTr2eTydfUmM"    // optional: US national-park campgrounds key
 };
