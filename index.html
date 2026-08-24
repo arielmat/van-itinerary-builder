@@ -642,7 +642,7 @@ async function fetchWikiAttractions(coords){
     });
   });
   list.sort((a,b)=>a.d-b.d);
-  const top=list.slice(0,120);
+  const top=list.slice(0,30);
   // fetch each article's short (Wikidata) description in chunks of 50 pageids
   for(let i=0;i<top.length;i+=50){
     const ids=top.slice(i,i+50).map(a=>a.pageid).join("|");
@@ -708,7 +708,13 @@ function fetchGeoNamesAttractions(coords){
     list.push({lat, lon, name:a[0], kind:GEO_KIND[a[3]]||a[3], country:GEO_COUNTRY[a[4]],
       d, wiki:null, website:null, src:"geonames"});
   }
-  return list.sort((a,b)=>a.d-b.d).slice(0,120);
+  // keep the marquee kinds preferentially, then nearest — so the map isn't cluttered
+  const TIER1=new Set(["archaeological site","historical site","monument","museum","volcano",
+    "waterfall","castle","cathedral","pyramid","pyramids","ruins","fort","palace","natural arch","cave","observatory","monastery"]);
+  return list.sort((a,b)=>{
+    const ta=TIER1.has(a.kind)?0:1, tb=TIER1.has(b.kind)?0:1;
+    return ta!==tb ? ta-tb : a.d-b.d;
+  }).slice(0,25);
 }
 
 // Re-run just the attractions when the source dropdown changes (no full re-plan)
@@ -719,8 +725,8 @@ function changeAttrSource(){
 // Dispatch on the user-selected source: GeoNames (default) · Wikipedia · OSM
 async function fetchAttractions(coords){
   const src=(document.getElementById("attrSource")||{}).value||"geonames";
-  if(src==="wikipedia") return (await fetchWikiAttractions(coords)).sort((a,b)=>a.d-b.d).slice(0,120);
-  if(src==="osm")       return (await fetchOSMAttractions(coords)).sort((a,b)=>a.d-b.d).slice(0,120);
+  if(src==="wikipedia") return (await fetchWikiAttractions(coords)).sort((a,b)=>a.d-b.d).slice(0,25);
+  if(src==="osm")       return (await fetchOSMAttractions(coords)).sort((a,b)=>a.d-b.d).slice(0,25);
   return fetchGeoNamesAttractions(coords);
 }
 
@@ -955,7 +961,7 @@ function enrichGyms(coords, token){
   if(token!==planSeq) return;
   found.sort((a,b)=>a.d-b.d);
   const icon=L.divIcon({className:"",html:`<div class="poi-pin">🏋️</div>`,iconSize:[24,24],iconAnchor:[12,12]});
-  found.forEach(g=>{
+  found.slice(0,15).forEach(g=>{ // only pin the nearest 15 to keep the map readable
     const q=["Planet Fitness",g.city,g.region].filter(Boolean).join(", ");
     const maps=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
     const where=[g.city,g.region].filter(Boolean).join(", ");
@@ -981,7 +987,8 @@ function enrichParks(coords, token){
   }
   if(token!==planSeq) return;
   found.sort((a,b)=>a.d-b.d);
-  found.forEach(p=>{
+  // pin national parks first, then nearest state parks — cap at 20 to reduce clutter
+  [...found].sort((a,b)=>{const ta=a.type==="national"?0:1,tb=b.type==="national"?0:1;return ta!==tb?ta-tb:a.d-b.d;}).slice(0,20).forEach(p=>{
     const emoji=p.type==="national"?"🏞️":"🌲";
     const icon=L.divIcon({className:"",html:`<div class="poi-pin">${emoji}</div>`,iconSize:[24,24],iconAnchor:[12,12]});
     const q=[p.name,p.country].filter(Boolean).join(", ");
@@ -997,19 +1004,16 @@ function enrichParks(coords, token){
     : `<div class="card"><span class="muted" style="font-size:12px">No national/state parks within 40 km of this route.</span></div>`;
 }
 
-// Thrift / second-hand / charity clothing shops near the route (live OpenStreetMap)
+// Thrift / second-hand / charity clothing shops near the route (live OpenStreetMap).
+// One indexed bounding-box query over the route corridor (the many-`around` version
+// timed out on Overpass), then filtered client-side to within 10 km of the road.
 async function fetchThrift(coords){
-  // cap points and use exact-match/indexed clauses (no regex, no relations) so the
-  // multi-point union query stays under Overpass's runtime limit
-  let step=45, pts=samplePointsByDist(coords, step);
-  while(pts.length>11){ step*=1.4; pts=samplePointsByDist(coords, step); }
-  const parts=[];
-  pts.forEach(p=>{
-    const a=`around:30000,${p[1]},${p[0]}`;
-    parts.push(`nw["shop"="second_hand"]["name"](${a});`);
-    parts.push(`nw["shop"="charity"]["name"](${a});`);
-  });
-  const q=`[out:json][timeout:50];(${parts.join("")});out center 200;`;
+  const bb=bboxOfRoute(coords, 0.12); // ~13 km pad so edge/endpoint shops are included
+  const box=`${bb.minLat},${bb.minLon},${bb.maxLat},${bb.maxLon}`;
+  const q=`[out:json][timeout:55];(`
+    +`nw["shop"="second_hand"]["name"](${box});`
+    +`nw["shop"="charity"]["name"](${box});`
+    +`);out center 600;`;
   try{
     const r=await fetch("https://overpass-api.de/api/interpreter",{
       method:"POST",headers:{"Content-Type":"text/plain"},body:q});
@@ -1021,19 +1025,19 @@ async function fetchThrift(coords){
       if(!lat||!lon) return;
       const id=e.type+e.id; if(seen.has(id)) return; seen.add(id);
       const t=e.tags||{};
-      const kind = t.shop==="charity" ? "charity shop" : (t.shop==="clothes" ? "second-hand clothes" : "thrift / second-hand");
-      const d=distToRoute([lon,lat],coords); if(d>10) return; // only shops within 10 km of the route
+      const kind = t.shop==="charity" ? "charity shop" : "thrift / second-hand";
+      const d=distToRoute([lon,lat],coords); if(d>10) return; // only shops within 10 km of the road
       list.push({lat,lon,name:t.name,kind,d,
         city:t["addr:city"]||"", website:t.website||t["contact:website"]||null});
     });
-    return list.sort((a,b)=>a.d-b.d).slice(0,120);
+    return list.sort((a,b)=>a.d-b.d).slice(0,60);
   }catch{ return []; }
 }
 async function enrichThrift(coords, token){
   const shops=await fetchThrift(coords);
   if(token!==planSeq) return;
   const icon=L.divIcon({className:"",html:`<div class="poi-pin">👕</div>`,iconSize:[24,24],iconAnchor:[12,12]});
-  shops.forEach(s=>{
+  shops.slice(0,30).forEach(s=>{ // nearest 30 to keep the map readable
     const q=[s.name, s.city, "USA"].filter(Boolean).join(", ");
     const maps=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
     const links=[s.website?`<a href="${s.website}" target="_blank" rel="noopener">Website</a>`:"",
